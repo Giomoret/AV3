@@ -20,6 +20,9 @@ const formatCPF = (cpf: string) => {
     .replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d{1,2})/, "$1.$2.$3-$4");
 };
 
+// Remove máscara antes de enviar ao backend
+const stripCPF = (cpf: string) => cpf.replace(/\D/g, "");
+
 async function cadastrarFuncionario(funcionario: FuncionarioCadastroPayload) {
   try {
     const response = await fetch("http://localhost:3000/funcionario", {
@@ -160,6 +163,8 @@ function Funcionarios() {
       const updatedEmployee = {
         ...editingEmployee,
         ...newEmployee,
+        // Envia CPF sem máscara para evitar falso conflito no backend
+        cpf: stripCPF(newEmployee.cpf),
         endereco: newEndereco,
         telefone: newTelefone,
       };
@@ -168,7 +173,11 @@ function Funcionarios() {
 
       if (success) {
         setFuncionarios((prev) =>
-          prev.map((f) => (f.id === editingEmployee.id ? updatedEmployee : f))
+          prev.map((f) =>
+            f.id === editingEmployee.id
+              ? { ...updatedEmployee, cpf: newEmployee.cpf } // mantém máscara na tabela
+              : f
+          )
         );
         setIsModalOpen(false);
         setEditingEmployee(null);
@@ -176,6 +185,7 @@ function Funcionarios() {
     } else {
       const completeEmployeeData: FuncionarioCadastroPayload = {
         ...newEmployee,
+        cpf: stripCPF(newEmployee.cpf),
         endereco: newEndereco,
         telefone: newTelefone,
       };
@@ -194,56 +204,68 @@ function Funcionarios() {
     setStep(1);
   };
 
-  const carregarPeças = async () => {
+  const carregarFuncionarios = async () => {
     try {
       const response = await fetch("http://localhost:3000/funcionariosList");
       if (!response.ok) {
-        throw new Error("Erro ao buscar peças");
+        throw new Error("Erro ao buscar funcionários");
       }
       const dados: Funcionario[] = await response.json();
       setFuncionarios(dados);
     } catch (error) {
-      console.error("Erro ao carregar aeronaves:", error);
+      console.error("Erro ao carregar funcionários:", error);
     }
   };
 
   useEffect(() => {
-    carregarPeças();
+    carregarFuncionarios();
   }, []);
 
   const openModal = async (funcionario?: Funcionario) => {
     if (funcionario) {
-      const response = await fetch(
-        `http://localhost:3000/funcionario/${funcionario.id}`
-      );
-      const data = await response.json();
+      try {
+        const response = await fetch(
+          `http://localhost:3000/funcionario/${funcionario.id}`
+        );
 
-      if (!data || data.error) {
-        alert("Erro ao carregar dados do funcionário.");
+        if (!response.ok) {
+          alert("Erro ao carregar dados do funcionário.");
+          return;
+        }
+
+        const data = await response.json();
+
+        if (!data || data.error) {
+          alert("Erro ao carregar dados do funcionário.");
+          return;
+        }
+
+        setEditingEmployee(data);
+
+        setNewEmployee({
+          nome: data.nome ?? "",
+          cpf: formatCPF(data.cpf ?? ""), // garante que exibe formatado
+          cargo: data.cargo ?? Hierarquia.Operador,
+          login: data.login ?? "",
+          senha: data.senha ?? "",
+        });
+
+        setNewEndereco({
+          rua: data.endereco?.rua ?? "",
+          numero: data.endereco?.numero ?? 0,
+          bairro: data.endereco?.bairro ?? "",
+          cidade: data.endereco?.cidade ?? "",
+        });
+
+        setNewTelefone({
+          ddd: data.telefone?.ddd ?? "",
+          numero: data.telefone?.numero ?? "",
+        });
+      } catch (error) {
+        console.error(error);
+        alert("Erro ao conectar com o servidor.");
         return;
       }
-
-      setEditingEmployee(data);
-
-      setNewEmployee({
-        nome: data.nome ?? "",
-        cpf: data.cpf ?? "",
-        cargo: data.cargo ?? Hierarquia.Operador,
-        login: data.login ?? "",
-        senha: data.senha ?? "",
-      });
-
-      setNewEndereco({
-        rua: data.endereco?.rua ?? "",
-        numero: data.endereco?.numero ?? 0,
-        bairro: data.endereco?.bairro ?? "",
-        cidade: data.endereco?.cidade ?? "",
-      });
-
-      setNewTelefone({
-        ddd: data.telefone?.ddd ?? "",
-        numero: data.telefone?.numero ?? "",
-      });
     } else {
       setEditingEmployee(null);
       setNewEmployee(initialEmployeeState);
@@ -423,7 +445,6 @@ function Funcionarios() {
               </button>
             )}
 
-            {/* Botão Salvar visível na tela 1 (edição rápida) e na tela 3 (fim do cadastro) */}
             {(step === 1 || step === 3) && (
               <button
                 type="submit"

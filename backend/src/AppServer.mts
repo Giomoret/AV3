@@ -3,15 +3,19 @@ import { PrismaClient } from "@prisma/client";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import { performance } from 'perf_hooks';
+import { metricsMiddleware } from "./middlewares/metricsMiddleware.js";
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = 3000;
 
 app.use(express.json());
+app.use(metricsMiddleware);
 app.use(cors());
 
 const JWT_SECRET = "sua_chave_secreta_para_o_projeto_muito_importante_aerocode_dev";
+
+const stripCPF = (cpf: string) => cpf.replace(/\D/g, "");
 
 app.get("/", (req, res) => {
     res.send("Servidor Express rodando.");
@@ -63,12 +67,7 @@ app.post("/aeronave", async (req, res) => {
         }
 
         const aeronave = await prisma.aeronave.create({
-            data: {
-                modelo: modelo,
-                tipo: tipo,
-                capacidade: capacidade,
-                autonomia: autonomia,
-            },
+            data: { modelo, tipo, capacidade, autonomia },
         });
 
         return res.status(200).json(aeronave);
@@ -81,11 +80,7 @@ app.post("/aeronave", async (req, res) => {
 app.post("/aeronaveDelete", async (req, res) => {
     try {
         const { codigo } = req.body;
-
-        const aeronave = await prisma.aeronave.delete({
-            where: { codigo },
-        });
-
+        await prisma.aeronave.delete({ where: { codigo } });
         return res.status(200);
     } catch (error) {
         console.log(error);
@@ -98,19 +93,12 @@ app.put("/aeronaveEdit", async (req, res) => {
         const { codigo, modelo, tipo, capacidade, autonomia } = req.body;
 
         if (!codigo) {
-            return res
-                .status(400)
-                .json({ error: "Código da aeronave é obrigatório." });
+            return res.status(400).json({ error: "Código da aeronave é obrigatório." });
         }
 
         const aeronaveAtualizada = await prisma.aeronave.update({
             where: { codigo: Number(codigo) },
-            data: {
-                modelo,
-                tipo,
-                capacidade,
-                autonomia,
-            },
+            data: { modelo, tipo, capacidade, autonomia },
         });
 
         return res.status(200).json(aeronaveAtualizada);
@@ -134,14 +122,7 @@ app.post("/peca", async (req, res) => {
         }
 
         const peca = await prisma.peca.create({
-            data: {
-                id,
-                nome,
-                tipo,
-                fornecedor,
-                status: status,
-                aeronaveId,
-            },
+            data: { id, nome, tipo, fornecedor, status, aeronaveId },
         });
 
         return res.status(201).json(peca);
@@ -154,12 +135,8 @@ app.post("/peca", async (req, res) => {
 app.post("/pecaDelete", async (req, res) => {
     try {
         const { id } = req.body;
-
-        const peça = await prisma.peca.delete({
-            where: { id: id },
-        });
-
-        return res.status(200).json(peça);
+        const peca = await prisma.peca.delete({ where: { id } });
+        return res.status(200).json(peca);
     } catch (error) {
         console.log(error);
         return res.status(500).json({ error: "Erro ao deletar a aeronave" });
@@ -170,20 +147,15 @@ app.put("/pecaEdit", async (req, res) => {
     try {
         const { id, nome, fornecedor, status, aeronaveId } = req.body;
 
-        const peçaAtualizada = await prisma.peca.update({
+        const pecaAtualizada = await prisma.peca.update({
             where: { id: Number(id) },
-            data: {
-                nome,
-                fornecedor,
-                status,
-                aeronaveId,
-            },
+            data: { nome, fornecedor, status, aeronaveId },
         });
 
-        return res.status(200).json(peçaAtualizada);
+        return res.status(200).json(pecaAtualizada);
     } catch (error) {
-        console.log(error);
-        return res.status(500);
+        console.error("Erro na operação:", error);
+        return res.status(500).json({ error: "Erro interno no servidor" });
     }
 });
 
@@ -193,22 +165,18 @@ app.get("/pecasList", async (req, res) => {
     const skip = (page - 1) * pageSize;
 
     try {
-        const [peças, totalPeças] = await prisma.$transaction([
-            prisma.peca.findMany({
-                skip: skip,
-                take: pageSize,
-                orderBy: { id: 'asc' },
-            }),
+        const [pecas, totalPecas] = await prisma.$transaction([
+            prisma.peca.findMany({ skip, take: pageSize, orderBy: { id: 'asc' } }),
             prisma.peca.count(),
         ]);
 
         return res.json({
-            data: peças,
+            data: pecas,
             pagination: {
-                total: totalPeças,
-                page: page,
-                pageSize: pageSize,
-                totalPages: Math.ceil(totalPeças / pageSize)
+                total: totalPecas,
+                page,
+                pageSize,
+                totalPages: Math.ceil(totalPecas / pageSize)
             }
         });
     } catch (error) {
@@ -223,35 +191,30 @@ app.post("/funcionario", async (req, res) => {
 
         if (!nome || !cpf || !cargo || !login || !senha || !endereco || !telefone) {
             return res.status(400).json({
-                error:
-                    "Todos os campos (incluindo Endereço e Telefone) são obrigatórios.",
+                error: "Todos os campos (incluindo Endereço e Telefone) são obrigatórios.",
             });
         }
 
-        const [novoEndereco, novoTelefone, novoFuncionario] =
-            await prisma.$transaction([
-                prisma.endereco.create({
-                    data: {
-                        rua: endereco.rua,
-                        numero: endereco.numero,
-                        bairro: endereco.bairro,
-                        cidade: endereco.cidade,
-                    },
-                }),
+        const cpfNormalizado = stripCPF(cpf);
 
-                prisma.telefone.create({
-                    data: {
-                        ddd: telefone.ddd,
-                        numero: telefone.numero,
-                    },
-                }),
+        const [novoEndereco, novoTelefone, novoFuncionario] = await prisma.$transaction([
+            prisma.endereco.create({
+                data: {
+                    rua: endereco.rua,
+                    numero: endereco.numero,
+                    bairro: endereco.bairro,
+                    cidade: endereco.cidade,
+                },
+            }),
+            prisma.telefone.create({
+                data: { ddd: telefone.ddd, numero: telefone.numero },
+            }),
+            prisma.funcionario.create({
+                data: { nome, cpf: cpfNormalizado, cargo, login, senha },
+            }),
+        ]);
 
-                prisma.funcionario.create({
-                    data: { nome, cpf, cargo, login, senha },
-                }),
-            ]);
-
-        const newUser = await prisma.user.create({
+        await prisma.user.create({
             data: {
                 usuario: login,
                 password: senha,
@@ -265,21 +228,15 @@ app.post("/funcionario", async (req, res) => {
                 endereco: { connect: { id: novoEndereco.id } },
                 telefone: { connect: { id: novoTelefone.id } },
             },
-            include: {
-                endereco: true,
-                telefone: true,
-                user: true,
-            },
+            include: { endereco: true, telefone: true, user: true },
         });
 
         return res.status(201).json(funcionarioCompleto);
-    } catch (error) {
+    } catch (error: any) {
         console.error(error);
-
-        if (error === 'P2002') {
+        if (error.code === 'P2002') {
             return res.status(400).json({ error: "CPF ou Login (Usuário) já cadastrado. Por favor, utilize outro." });
         }
-
         return res.status(500).json({ error: "Erro ao criar funcionário", detalhe: error });
     }
 });
@@ -292,46 +249,69 @@ app.put("/funcionarioEdit", async (req, res) => {
             return res.status(400).json({ error: "ID do funcionário é obrigatório." });
         }
 
-        // 1. Prepara os dados do funcionário
-        const dataFuncionario: any = {};
-        if (nome) dataFuncionario.nome = nome;
-        if (cpf) dataFuncionario.cpf = cpf;
-        if (cargo) dataFuncionario.cargo = cargo;
-        if (login) dataFuncionario.login = login;
-        if (senha && senha.trim() !== "") dataFuncionario.senha = senha;
+        const cpfNormalizado = cpf ? stripCPF(cpf) : undefined;
 
-        // 2. Prepara os dados do usuário (Login)
-        const dataUser: any = {};
-        if (login) dataUser.usuario = login;
-        if (senha && senha.trim() !== "") dataUser.password = senha;
-
-        // 3. Atualiza o Funcionário base
-        await prisma.funcionario.update({
-            where: { id: Number(id) },
-            data: dataFuncionario,
-        });
-
-        // 4. Atualiza o Usuário associado (se existir)
+        // Busca o user vinculado ANTES de montar dataUser
         const userExistente = await prisma.user.findFirst({
             where: { funcionarioId: Number(id) }
         });
 
-        if (userExistente && Object.keys(dataUser).length > 0) {
-            await prisma.user.update({
-                where: { id: userExistente.id },
-                data: dataUser,
-            });
+        // Verifica duplicata em OUTROS funcionários
+        const duplicado = await prisma.funcionario.findFirst({
+            where: {
+                AND: [
+                    { id: { not: Number(id) } },
+                    {
+                        OR: [
+                            ...(cpfNormalizado ? [{ cpf: cpfNormalizado }] : []),
+                            ...(login ? [{ login }] : []),
+                        ]
+                    }
+                ]
+            }
+        });
+
+        if (duplicado) {
+            return res.status(400).json({ error: "CPF ou Login (Usuário) já cadastrado em outro funcionário." });
         }
 
-        // 5. O SEGREDO ESTÁ AQUI: Buscar e retornar o funcionário com TODOS os dados (Endereço e Telefone).
-        // Isso impede que o frontend quebre ao tentar redesenhar a tabela.
+        const dataFuncionario: any = {};
+        if (nome) dataFuncionario.nome = nome;
+        if (cpfNormalizado) dataFuncionario.cpf = cpfNormalizado;
+        if (cargo) dataFuncionario.cargo = cargo;
+        if (login) dataFuncionario.login = login;
+        if (senha && senha.trim() !== "") dataFuncionario.senha = senha;
+
+        const dataUser: any = {};
+        // Só atualiza o usuario no User se o login realmente mudou
+        console.log("userExistente:", userExistente);
+        console.log("login recebido:", login);
+        if (login && login !== userExistente?.usuario) dataUser.usuario = login;
+        if (senha && senha.trim() !== "") dataUser.password = senha;
+
+        const transactionQueries: any[] = [];
+
+        transactionQueries.push(
+            prisma.funcionario.update({
+                where: { id: Number(id) },
+                data: dataFuncionario,
+            })
+        );
+
+        if (userExistente && Object.keys(dataUser).length > 0) {
+            transactionQueries.push(
+                prisma.user.update({
+                    where: { id: userExistente.id },
+                    data: dataUser,
+                })
+            );
+        }
+
+        await prisma.$transaction(transactionQueries);
+
         const funcionarioCompleto = await prisma.funcionario.findUnique({
             where: { id: Number(id) },
-            include: {
-                endereco: true,
-                telefone: true,
-                user: true
-            }
+            include: { endereco: true, telefone: true, user: true }
         });
 
         return res.status(200).json(funcionarioCompleto);
@@ -348,10 +328,7 @@ app.get("/funcionario/:id", async (req, res) => {
     try {
         const funcionario = await prisma.funcionario.findUnique({
             where: { id: Number(req.params.id) },
-            include: {
-                endereco: true,
-                telefone: true,
-            },
+            include: { endereco: true, telefone: true },
         });
 
         if (!funcionario) {
@@ -368,19 +345,22 @@ app.get("/funcionario/:id", async (req, res) => {
 app.delete("/funcionario/:id", async (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const [enderecoResult, telefoneResult, funcionarioResult] =
+
+        const userVinculado = await prisma.user.findFirst({ where: { funcionarioId: id } });
+
+        if (userVinculado && userVinculado.usuario === "admin") {
+            return res.status(403).json({
+                error: "Operação negada: A conta de Administrador principal não pode ser excluída do sistema."
+            });
+        }
+
+        const [userResult, etapaResult, enderecoResult, telefoneResult, funcionarioResult] =
             await prisma.$transaction([
-                prisma.endereco.deleteMany({
-                    where: { funcionarioId: id },
-                }),
-
-                prisma.telefone.deleteMany({
-                    where: { funcionarioId: id },
-                }),
-
-                prisma.funcionario.delete({
-                    where: { id },
-                }),
+                prisma.user.deleteMany({ where: { funcionarioId: id } }),
+                prisma.etapaFuncionario.deleteMany({ where: { funcionarioId: id } }),
+                prisma.endereco.deleteMany({ where: { funcionarioId: id } }),
+                prisma.telefone.deleteMany({ where: { funcionarioId: id } }),
+                prisma.funcionario.delete({ where: { id } }),
             ]);
 
         return res.status(200).json({
@@ -388,14 +368,30 @@ app.delete("/funcionario/:id", async (req, res) => {
             funcionario: funcionarioResult,
             enderecosDeletados: enderecoResult.count,
             telefonesDeletados: telefoneResult.count,
+            usuariosDeletados: userResult.count,
         });
-    } catch (error) {
-        return res.status(404).json({ error: "Funcionário não encontrado." });
+    } catch (error: any) {
+        console.error("Erro ao tentar deletar o funcionário:", error);
+        if (error.code === 'P2025') {
+            return res.status(404).json({ error: "Funcionário não encontrado." });
+        }
+        return res.status(500).json({ error: "Falha interna ao tentar excluir o funcionário.", detalhe: error.message });
     }
 });
 
 app.get("/funcionariosList", async (req, res) => {
+    const t0 = performance.now();
+    const t1 = performance.now();
     const funcionarios = await prisma.funcionario.findMany();
+    const t2 = performance.now();
+    const t3 = performance.now();
+
+    const TR = (t3 - t0).toFixed(2);
+    const TP = (t2 - t1).toFixed(2);
+    const Latencia = (t3 - t0 - (t2 - t1)).toFixed(2);
+
+    console.log(`[METRICAS] Rota: GET /funcionariosList | TR: ${TR}ms | TP: ${TP}ms | Latência: ${Latencia}ms`);
+
     return res.json(funcionarios);
 });
 
@@ -409,13 +405,8 @@ app.post("/teste", async (req, res) => {
         }
 
         const testeExistente = await prisma.teste.findFirst({
-            where: {
-                aeronaveId: aeronaveIdNum,
-                tipo: tipo,
-            },
-            orderBy: {
-                data: "desc",
-            },
+            where: { aeronaveId: aeronaveIdNum, tipo },
+            orderBy: { data: "desc" },
         });
 
         if (testeExistente) {
@@ -427,31 +418,23 @@ app.post("/teste", async (req, res) => {
 
             if (testeExistente.resultado === "Reprovado") {
                 const testeAtualizado = await prisma.teste.update({
-                    where: {
-                        id: testeExistente.id,
-                    },
-                    data: {
-                        resultado: resultado,
-                        data: new Date(),
-                    },
+                    where: { id: testeExistente.id },
+                    data: { resultado, data: new Date() },
                 });
-
                 return res.status(200).json({
                     message: `Resultado de teste ${tipo} atualizado com sucesso.`,
                     teste: testeAtualizado,
                 });
             }
-
         } else {
             const novoTeste = await prisma.teste.create({
                 data: {
                     aeronaveId: aeronaveIdNum,
-                    tipo: tipo,
-                    resultado: resultado,
+                    tipo,
+                    resultado,
                     data: data ? new Date(data) : new Date(),
                 },
             });
-
             return res.status(201).json({
                 message: `Novo teste ${tipo} registrado com sucesso.`,
                 teste: novoTeste,
@@ -459,18 +442,7 @@ app.post("/teste", async (req, res) => {
         }
     } catch (error) {
         console.error("Erro no processamento do teste:", error);
-
-        if (error === "P2003") {
-            return res
-                .status(404)
-                .json({
-                    error: "Aeronave não encontrada. Verifique o código da aeronave.",
-                });
-        }
-
-        return res
-            .status(500)
-            .json({ error: "Erro interno do servidor.", detalhe: error });
+        return res.status(500).json({ error: "Erro interno do servidor.", detalhe: error });
     }
 });
 
@@ -479,28 +451,18 @@ app.get("/testes/:aeronaveId", async (req, res) => {
         const aeronaveId = parseInt(req.params.aeronaveId);
 
         if (isNaN(aeronaveId)) {
-            return res
-                .status(400)
-                .json({ error: "O ID da aeronave deve ser um número válido." });
+            return res.status(400).json({ error: "O ID da aeronave deve ser um número válido." });
         }
 
         const historicoTestes = await prisma.teste.findMany({
-            where: {
-                aeronaveId: aeronaveId,
-            },
-            orderBy: {
-                data: "desc",
-            },
+            where: { aeronaveId },
+            orderBy: { data: "desc" },
         });
 
         return res.status(200).json(historicoTestes);
     } catch (error) {
         console.error("Erro ao buscar histórico de testes:", error);
-        return res
-            .status(500)
-            .json({
-                error: "Erro interno do servidor ao buscar histórico de testes.",
-            });
+        return res.status(500).json({ error: "Erro interno do servidor ao buscar histórico de testes." });
     }
 });
 
@@ -508,23 +470,11 @@ app.post("/etapa", async (req, res) => {
     try {
         const { nome, dataPrevista, aeronaveId, funcionarioIds } = req.body;
 
-        if (
-            !nome ||
-            !dataPrevista ||
-            !aeronaveId ||
-            !Array.isArray(funcionarioIds)
-        ) {
-            return res
-                .status(400)
-                .json({
-                    error:
-                        "Campos obrigatórios faltando (nome, dataPrevista, aeronaveId e lista de IDs de funcionários).",
-                });
+        if (!nome || !dataPrevista || !aeronaveId || !Array.isArray(funcionarioIds)) {
+            return res.status(400).json({
+                error: "Campos obrigatórios faltando (nome, dataPrevista, aeronaveId e lista de IDs de funcionários).",
+            });
         }
-
-        const funcionariosConnect = funcionarioIds.map((id) => ({
-            funcionarioId: Number(id),
-        }));
 
         const novaEtapa = await prisma.etapa.create({
             data: {
@@ -533,20 +483,20 @@ app.post("/etapa", async (req, res) => {
                 status: "Pendente",
                 aeronaveId: Number(aeronaveId),
                 funcionarios: {
-                    create: funcionariosConnect,
+                    create: funcionarioIds.map((id) => ({ funcionarioId: Number(id) })),
                 },
             },
             include: {
-                funcionarios: true,
+                funcionarios: {
+                    include: { funcionario: { select: { nome: true, id: true, cargo: true } } }
+                },
             },
         });
 
         return res.status(201).json(novaEtapa);
     } catch (error) {
         console.error("Erro ao criar etapa:", error);
-        return res
-            .status(500)
-            .json({ error: "Erro ao criar etapa.", detalhe: error });
+        return res.status(500).json({ error: "Erro ao criar etapa.", detalhe: error });
     }
 });
 
@@ -556,9 +506,7 @@ app.get("/etapasList", async (req, res) => {
             include: {
                 funcionarios: {
                     include: {
-                        funcionario: {
-                            select: { nome: true, id: true },
-                        },
+                        funcionario: { select: { nome: true, id: true, cargo: true } },
                     },
                 },
             },
@@ -573,69 +521,46 @@ app.get("/etapasList", async (req, res) => {
 
 app.put("/etapaEdit", async (req, res) => {
     try {
-        const { id, nome, dataPrevista, status, aeronaveId, funcionarioIds } =
-            req.body;
+        const { id, nome, dataPrevista, status, aeronaveId, funcionarioIds } = req.body;
         const etapaId = Number(id);
 
         if (!etapaId) {
             return res.status(400).json({ error: "ID da etapa é obrigatório." });
         }
 
-        const etapaExistente = await prisma.etapa.findUnique({
-            where: { id: etapaId },
-        });
+        const etapaExistente = await prisma.etapa.findUnique({ where: { id: etapaId } });
 
         if (!etapaExistente) {
             return res.status(404).json({ error: "Etapa não encontrada." });
         }
 
         if (etapaExistente.status === "Concluido" && status !== "Concluido") {
-            return res
-                .status(403)
-                .json({
-                    error:
-                        "Etapa já concluída não pode ter o status alterado (reaberta).",
-                });
+            return res.status(403).json({
+                error: "Etapa já concluída não pode ter o status alterado (reaberta).",
+            });
         }
 
-        const dataToUpdate = {
-            nome: nome,
+        const dataToUpdate: any = {
+            nome,
             dataPrevista: new Date(dataPrevista),
-            status: status,
+            status,
             aeronaveId: Number(aeronaveId),
         };
 
-        const etapaAtualizada = await prisma.$transaction(async (prisma) => {
-            if (funcionarioIds && Array.isArray(funcionarioIds)) {
-                await prisma.etapaFuncionario.deleteMany({
-                    where: { etapaId: etapaId },
-                });
+        if (funcionarioIds && Array.isArray(funcionarioIds)) {
+            dataToUpdate.funcionarios = {
+                deleteMany: {},
+                create: funcionarioIds.map((funcId) => ({ funcionarioId: Number(funcId) })),
+            };
+        }
 
-                if (funcionarioIds.length > 0) {
-                    const connectFuncs = funcionarioIds.map((id) => ({
-                        etapaId: etapaId,
-                        funcionarioId: Number(id),
-                    }));
-                    await prisma.etapaFuncionario.createMany({
-                        data: connectFuncs,
-                    });
-                }
-            }
-
-            return prisma.etapa.update({
-                where: { id: etapaId },
-                data: dataToUpdate,
-            });
-        });
-
-        const etapaCompleta = await prisma.etapa.findUnique({
+        const etapaCompleta = await prisma.etapa.update({
             where: { id: etapaId },
+            data: dataToUpdate,
             include: {
                 funcionarios: {
                     include: {
-                        funcionario: {
-                            select: { nome: true, id: true },
-                        },
+                        funcionario: { select: { nome: true, id: true, cargo: true } },
                     },
                 },
             },
@@ -644,9 +569,7 @@ app.put("/etapaEdit", async (req, res) => {
         return res.status(200).json(etapaCompleta);
     } catch (error) {
         console.error("Erro ao atualizar etapa:", error);
-        return res
-            .status(500)
-            .json({ error: "Erro ao atualizar etapa.", detalhe: error });
+        return res.status(500).json({ error: "Erro ao atualizar etapa.", detalhe: error });
     }
 });
 
@@ -659,17 +582,11 @@ app.delete("/etapaDelete/:id", async (req, res) => {
         }
 
         await prisma.$transaction([
-            prisma.etapaFuncionario.deleteMany({
-                where: { etapaId: id },
-            }),
-            prisma.etapa.delete({
-                where: { id },
-            }),
+            prisma.etapaFuncionario.deleteMany({ where: { etapaId: id } }),
+            prisma.etapa.delete({ where: { id } }),
         ]);
 
-        return res
-            .status(200)
-            .json({ message: "Etapa e associações excluídas com sucesso." });
+        return res.status(200).json({ message: "Etapa e associações excluídas com sucesso." });
     } catch (error) {
         console.error("Erro ao deletar etapa:", error);
         return res.status(404).json({ error: "Etapa não encontrada." });
@@ -679,11 +596,7 @@ app.delete("/etapaDelete/:id", async (req, res) => {
 app.get("/funcionariosListAll", async (req, res) => {
     try {
         const funcionarios = await prisma.funcionario.findMany({
-            select: {
-                id: true,
-                nome: true,
-                cargo: true,
-            },
+            select: { id: true, nome: true, cargo: true },
         });
         return res.json(funcionarios);
     } catch (error) {
@@ -691,7 +604,6 @@ app.get("/funcionariosListAll", async (req, res) => {
         return res.status(500).json({ error: "Erro ao listar funcionários." });
     }
 });
-
 
 app.post("/gerarRelatorio", async (req, res) => {
     const startTime = performance.now();
@@ -703,7 +615,6 @@ app.post("/gerarRelatorio", async (req, res) => {
         if (!aeronaveIdNum || !autor) {
             return res.status(400).json({ error: "Aeronave e Autor do relatório são obrigatórios." });
         }
-
 
         const [etapasValidacao, todosTestes] = await prisma.$transaction([
             prisma.etapa.findMany({
@@ -720,6 +631,7 @@ app.post("/gerarRelatorio", async (req, res) => {
         if (etapasValidacao.length === 0) {
             return res.status(403).json({ error: `Relatório negado: Nenhuma etapa de produção encontrada para a aeronave ${aeronaveId}.` });
         }
+
         const etapasNaoConcluidas = etapasValidacao.filter(e => e.status !== 'Concluido');
         if (etapasNaoConcluidas.length > 0) {
             const nomesEtapasPendentes = etapasNaoConcluidas.map(e => e.nome).join(', ');
@@ -727,9 +639,7 @@ app.post("/gerarRelatorio", async (req, res) => {
         }
 
         const ultimoResultadoPorTipo = todosTestes.reduce((acc, teste) => {
-            if (!acc.has(teste.tipo)) {
-                acc.set(teste.tipo, teste.resultado);
-            }
+            if (!acc.has(teste.tipo)) acc.set(teste.tipo, teste.resultado);
             return acc;
         }, new Map());
 
@@ -742,9 +652,7 @@ app.post("/gerarRelatorio", async (req, res) => {
         }
 
         const [aeronaveBasica, pecasDetalhe, etapasDetalhe, testesDetalhe] = await prisma.$transaction([
-            prisma.aeronave.findUnique({
-                where: { codigo: aeronaveIdNum },
-            }),
+            prisma.aeronave.findUnique({ where: { codigo: aeronaveIdNum } }),
             prisma.peca.findMany({
                 where: { aeronaveId: aeronaveIdNum },
                 select: { id: true, nome: true, fornecedor: true, status: true, tipo: true }
@@ -778,13 +686,11 @@ app.post("/gerarRelatorio", async (req, res) => {
         const endTime = performance.now();
         const tpDuration = endTime - startTime;
 
-        console.log(`[REAL TP] TP: ${tpDuration.toFixed(3)} ms`);
-
         return res.status(200).json({
             aeronave: aeronaveCompleta,
             relatorioInfo: {
                 dataGeracao: new Date().toISOString(),
-                autor: autor,
+                autor,
                 tempoProcessamento: `${tpDuration} ms`
             }
         });

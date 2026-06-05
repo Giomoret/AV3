@@ -88,11 +88,6 @@ function Etapas() {
     }));
   };
 
-  const handleSelectFuncionarioChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const ids = Array.from(e.target.selectedOptions, (o) => Number(o.value));
-    setSelectedFuncionarioIds(ids);
-  };
-
   const openModal = () => {
     setEditingEtapa(null);
     setCurrentEtapa({
@@ -216,18 +211,54 @@ function Etapas() {
 
           <div className="form-group">
             <label>Funcionários</label>
-            <select
-              multiple
-              value={selectedFuncionarioIds.map(String)}
-              onChange={handleSelectFuncionarioChange}
-              disabled={isConcluido}
+            <div
+              style={{
+                maxHeight: '150px',
+                overflowY: 'auto',
+                border: '1px solid #ccc',
+                padding: '10px',
+                borderRadius: '4px',
+                backgroundColor: isConcluido ? '#f3f4f6' : '#fff',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                textAlign: 'left'
+              }}
             >
-              {funcionariosList.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.nome} ({f.cargo})
-                </option>
-              ))}
-            </select>
+              {funcionariosList.map((f) => {
+                const textoCompleto = `${f.nome} (${f.cargo})`;
+                const limiteCaracteres = 35;
+                const textoExibido = textoCompleto.length > limiteCaracteres
+                  ? textoCompleto.substring(0, limiteCaracteres) + "..."
+                  : textoCompleto;
+                return (
+                  <div key={f.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '10px' }}>
+                    <input
+                      type="checkbox"
+                      id={`func-${f.id}`}
+                      value={f.id}
+                      checked={selectedFuncionarioIds.includes(f.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedFuncionarioIds([...selectedFuncionarioIds, f.id]);
+                        } else {
+                          setSelectedFuncionarioIds(selectedFuncionarioIds.filter(id => id !== f.id));
+                        }
+                      }}
+                      disabled={isConcluido}
+                      style={{ margin: 0, cursor: isConcluido ? 'not-allowed' : 'pointer', width: 'auto', height: 'auto', flexShrink: 0 }}
+                    />
+                    <label
+                      htmlFor={`func-${f.id}`}
+                      title={textoCompleto}
+                      style={{ margin: 0, cursor: isConcluido ? 'not-allowed' : 'pointer', textAlign: 'left', fontWeight: 'normal', fontSize: '14px' }}
+                    >
+                      {textoExibido}
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {editingEtapa && (
