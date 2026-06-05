@@ -1,6 +1,6 @@
 # ✈️ AeroCode — Sistema de Gestão de Produção Aeronáutica
 
-Sistema Full-Stack para gerenciamento de aeronaves, peças, funcionários, etapas de produção, testes e relatórios. Desenvolvido como projeto acadêmico na **FATec Guaratinguetá** para a disciplina de Análise e Desenvolvimento de Sistemas.
+Sistema Full-Stack para gerenciamento de aeronaves, peças, funcionários, etapas de produção, testes e relatórios. Desenvolvido como projeto acadêmico na **FATec São José dos Campos** para a disciplina de POO em Análise e Desenvolvimento de Sistemas.
 
 ---
 
